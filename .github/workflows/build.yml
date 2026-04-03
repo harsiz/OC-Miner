@@ -1,0 +1,31 @@
+name: Build OmegaMiner
+
+on:
+  push:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.21'
+
+      - name: Install dependencies
+        working-directory: go-miner
+        run: go mod tidy
+
+      - name: Build Windows exe
+        working-directory: go-miner
+        run: go build -ldflags="-H windowsgui" -o OmegaMiner.exe .
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: OmegaMiner-Windows
+          path: go-miner/OmegaMiner.exe

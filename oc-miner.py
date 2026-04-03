@@ -1,5 +1,3 @@
-# OMEGACASES MINER GUI!
-
 import tkinter as tk
 from tkinter import ttk, scrolledtext
 import hashlib
@@ -28,6 +26,38 @@ FONT_UI_B  = ("Segoe UI", 9, "bold")
 FONT_TITLE = ("Segoe UI", 11, "bold")
 FONT_STAT  = ("Courier New", 14, "bold")
 FONT_SMALL = ("Segoe UI", 8)
+
+
+# ── MULTIPROCESSING WORKER (module level, picklable) ─────────────────────────
+def _worker(prev_hash, miner_id_clean, target, core_id, num_cores,
+            result_queue, stop_event, rate_queue):
+    """Each worker owns a slice of the nonce space: core_id, core_id+num_cores, ..."""
+    import hashlib, time
+    prefix      = (prev_hash + miner_id_clean).encode()
+    nonce       = core_id
+    batch       = 5000          # hashes per rate-report batch
+    count       = 0
+    t0          = time.time()
+
+    while not stop_event.is_set():
+        nonce_b  = str(nonce).encode()
+        h        = hashlib.sha256(prefix + nonce_b).hexdigest()
+        count   += 1
+
+        if h < target:
+            preimage = prev_hash + miner_id_clean + str(nonce)
+            result_queue.put((nonce, h, preimage))
+            return
+
+        if count >= batch:
+            now  = time.time()
+            rate = count / (now - t0)
+            rate_queue.put((rate, count))
+            count = 0
+            t0    = now
+
+        nonce += num_cores   # stride by num_cores so workers never overlap
+
 
 
 class OmegaMiner:
@@ -326,7 +356,6 @@ class OmegaMiner:
     def _mine_loop(self, api, miner_id):
         while self.mining:
             try:
-                # Fetch work
                 self._log("Fetching new block template…", "info")
                 resp = requests.get(f"{api}/api/mining", timeout=10)
                 resp.raise_for_status()
@@ -335,52 +364,70 @@ class OmegaMiner:
                 target    = info.get("target", "")
                 prev_hash = info.get("previous_hash", "")
 
-                self.stat_queue.put(("target",    target))
+                self.stat_queue.put(("target", target))
                 self._log(f"Target:    {target}", "info")
                 self._log(f"Prev hash: {prev_hash}", "info")
+
+                miner_id_clean = miner_id.replace("-", "")
+
+                # pre-hash the static prefix once — big speedup
+                prefix     = (prev_hash + miner_id_clean).encode()
+                base_hash  = hashlib.sha256(prefix)
 
                 nonce      = 0
                 t0         = time.time()
                 last_rate  = time.time()
+                last_check = time.time()
                 rate_count = 0
 
-                miner_id_clean = miner_id.replace("-", "")
                 while self.mining:
-                    preimage = f"{prev_hash}{miner_id_clean}{nonce}"
-                    h = hashlib.sha256(preimage.encode()).hexdigest()
-                    rate_count += 1
+                    s = base_hash.copy()
+                    s.update(str(nonce).encode())
+                    h = s.hexdigest()
+                    rate_count          += 1
                     self.session_hashes += 1
 
-                    # Update hashrate every 0.5s
                     now = time.time()
+
+                    # Update hashrate every 0.5s
                     if now - last_rate >= 0.5:
                         self.hash_rate = rate_count / (now - last_rate)
                         rate_count  = 0
                         last_rate   = now
-                        self.stat_queue.put(("rate", self.hash_rate))
+                        self.stat_queue.put(("rate",   self.hash_rate))
                         self.stat_queue.put(("nonces", self.session_hashes))
 
+                    # Poll for new block every 20s
+                    if now - last_check >= 20.0:
+                        last_check = now
+                        try:
+                            check = requests.get(f"{api}/api/mining", timeout=5).json()
+                            if check.get("previous_hash") != prev_hash:
+                                self._log("⟳ New block detected — restarting…", "warn")
+                                break
+                        except Exception:
+                            pass
+
                     if h < target:
-                        elapsed = time.time() - t0
+                        elapsed  = now - t0
+                        preimage = prev_hash + miner_id_clean + str(nonce)
                         verify_h = hashlib.sha256(preimage.encode()).hexdigest()
                         self._log(f"✔ Block found! Nonce={nonce}  Hash={h}", "ok")
                         self._log(f"  DEBUG preimage: {preimage}", "info")
                         self._log(f"  DEBUG hash:     {h}", "info")
                         self._log(f"  DEBUG verify:   {verify_h}", "info")
                         self._log(f"  DEBUG match:    {h == verify_h}", "info")
-                        self._log(f"  Submitting…", "info")
-
+                        self._log("  Submitting…", "info")
                         try:
                             res = requests.post(f"{api}/api/mining", json={
                                 "miner_id": miner_id,
                                 "nonce":    nonce,
                                 "hash":     h
                             }, timeout=10)
-
                             if res.status_code == 200:
                                 self.session_blocks += 1
                                 self.stat_queue.put(("block", h))
-                                self._log(f"✔ Block accepted! ({elapsed:.2f}s) Response: {res.json()}", "ok")
+                                self._log(f"✔ Block accepted! ({elapsed:.2f}s) {res.json()}", "ok")
                             elif res.status_code == 409:
                                 self._log("✘ Stale — another miner was faster. Restarting…", "warn")
                                 self._log(f"  Body: {res.text}", "warn")

@@ -1,4 +1,4 @@
-name: Build OmegaMiner
+name: OCMinerBuild
 
 on:
   push:
@@ -17,15 +17,15 @@ jobs:
           go-version: '1.21'
 
       - name: Install dependencies
-        working-directory: go-miner
+        working-directory: go
         run: go mod tidy
 
       - name: Build Windows exe
-        working-directory: go-miner
+        working-directory: go
         run: go build -ldflags="-H windowsgui" -o OmegaMiner.exe .
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: OmegaMiner-Windows
-          path: go-miner/OmegaMiner.exe
+          name: OC-Miner-v1-2
+          path: go/OmegaMiner.exe

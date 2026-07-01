@@ -55,6 +55,7 @@ func Run(api, minerID string, msgs chan<- engine.Msg, stop *engine.StopFlag) {
 	defer m.Close()
 	msgs <- engine.Msg{Kind: engine.MsgAdapterName, Text: m.AdapterName}
 	log(fmt.Sprintf("GPU: %s (%d hashes/dispatch)", m.AdapterName, m.BatchSize()))
+	msgs <- engine.Msg{Kind: engine.MsgStatus, Text: "Mining"}
 
 	var totalHashes, blocksFound uint64
 	rateWindowStart := time.Now()

@@ -1,31 +1,84 @@
-name: OCMinerBuild
+name: Build
 
 on:
   push:
-    branches: [ main, master ]
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+    branches: [main]
   workflow_dispatch:
 
 jobs:
-  build-windows:
-    runs-on: windows-latest
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            goos: windows
+            ext: .exe
+            artifact: oc-miner-gpu-windows-amd64
+          - os: macos-latest
+            goos: darwin
+            ext: ""
+            artifact: oc-miner-gpu-macos-amd64
+          - os: ubuntu-latest
+            goos: linux
+            ext: ""
+            artifact: oc-miner-gpu-linux-amd64
+
+    runs-on: ${{ matrix.os }}
+
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up Go
-        uses: actions/setup-go@v5
+      - uses: actions/setup-go@v5
         with:
-          go-version: '1.21'
+          go-version: "1.25"
 
-      - name: Install dependencies
-        working-directory: go
-        run: go mod tidy
+      - name: Install Linux GUI/X11 build dependencies
+        if: matrix.goos == 'linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc libgl1-mesa-dev xorg-dev
 
-      - name: Build Windows exe
-        working-directory: go
-        run: go build -ldflags="-H windowsgui" -o OmegaMiner.exe .
+      - name: Build oc-miner-gpu (GUI)
+        run: go build -v -o dist/oc-miner-gpu${{ matrix.ext }} ./cmd/oc-miner-gpu
+        env:
+          CGO_ENABLED: 1
 
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
+      - name: Build oc-pool-server (reference pool)
+        run: go build -v -o dist/oc-pool-server${{ matrix.ext }} ./cmd/oc-pool-server
+        env:
+          CGO_ENABLED: 1
+
+      - name: Run tests
+        run: go test ./...
+
+      - uses: actions/upload-artifact@v4
         with:
-          name: OC-Miner-v1-2
-          path: go/OmegaMiner.exe
+          name: ${{ matrix.artifact }}
+          path: dist/*
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Package release archives
+        run: |
+          cd artifacts
+          for dir in */; do
+            name="${dir%/}"
+            (cd "$name" && zip -r "../${name}.zip" .)
+          done
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/*.zip

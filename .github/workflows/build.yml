@@ -47,7 +47,10 @@ jobs:
         env:
           CGO_ENABLED: 1
 
-      - name: Build oc-miner-cpu (CLI, solo + pool)
+      - name: Build oc-miner-gpu-cli (headless GPU CLI, solo + pool)
+        run: go build -v -o dist/oc-miner-gpu-cli${{ matrix.ext }} ./cmd/oc-miner-gpu-cli
+
+      - name: Build oc-miner-cpu (headless CPU CLI, solo + pool)
         run: go build -v -o dist/oc-miner-cpu${{ matrix.ext }} ./cmd/oc-miner-cpu
 
       - name: Build oc-pool-server (reference pool, Go)

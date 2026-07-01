@@ -13,8 +13,8 @@ import (
 	"time"
 
 	"github.com/harsiz/oc-miner/internal/engine"
-	"github.com/harsiz/oc-miner/internal/gpu"
 	"github.com/harsiz/oc-miner/internal/job"
+	"github.com/harsiz/oc-miner/internal/minerdevice"
 )
 
 type blockInfo struct {
@@ -37,24 +37,20 @@ func fetchBlock(api string) (*blockInfo, error) {
 	return &info, nil
 }
 
-// Run drives the solo mining loop until stop is signalled. Safe to run in
-// its own goroutine; progress and results are reported over msgs.
-func Run(api, minerID string, msgs chan<- engine.Msg, stop *engine.StopFlag) {
+// Run drives the solo mining loop until stop is signalled, using dev to
+// search nonces. Safe to run in its own goroutine; progress and results are
+// reported over msgs. The caller owns dev and should Close() it once Run
+// returns.
+func Run(api, minerID string, dev minerdevice.Device, msgs chan<- engine.Msg, stop *engine.StopFlag) {
 	api = strings.TrimRight(api, "/")
 	log := func(s string) { msgs <- engine.Msg{Kind: engine.MsgLog, Text: s} }
 
 	log(fmt.Sprintf("Starting solo miner | Address: %s", minerID))
 	log(fmt.Sprintf("API: %s", api))
 
-	m, err := gpu.New()
-	if err != nil {
-		log(fmt.Sprintf("GPU init failed: %v", err))
-		msgs <- engine.Msg{Kind: engine.MsgStatus, Text: "Error"}
-		return
-	}
-	defer m.Close()
-	msgs <- engine.Msg{Kind: engine.MsgAdapterName, Text: m.AdapterName}
-	log(fmt.Sprintf("GPU: %s (%d hashes/dispatch)", m.AdapterName, m.BatchSize()))
+	m := dev
+	msgs <- engine.Msg{Kind: engine.MsgAdapterName, Text: m.Name()}
+	log(fmt.Sprintf("Device: %s (%d hashes/batch)", m.Name(), m.BatchSize()))
 	msgs <- engine.Msg{Kind: engine.MsgStatus, Text: "Mining"}
 
 	var totalHashes, blocksFound uint64
@@ -91,7 +87,7 @@ func Run(api, minerID string, msgs chan<- engine.Msg, stop *engine.StopFlag) {
 
 			result, err := m.SearchBatch(j, baseNonce)
 			if err != nil {
-				log(fmt.Sprintf("GPU error: %v", err))
+				log(fmt.Sprintf("Device error: %v", err))
 				break inner
 			}
 			batchHashes := m.BatchSize()
@@ -114,7 +110,7 @@ func Run(api, minerID string, msgs chan<- engine.Msg, stop *engine.StopFlag) {
 			if result != nil {
 				verifyHash := j.HashNonce(result.Nonce)
 				if verifyHash != result.HashHex || !j.MeetsTarget(verifyHash) {
-					log("GPU result failed local verification, discarding and continuing.")
+					log("Result failed local verification, discarding and continuing.")
 					continue
 				}
 				log(fmt.Sprintf("✔ Block found! Nonce=%d Hash=%s", result.Nonce, result.HashHex))

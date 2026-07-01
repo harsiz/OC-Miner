@@ -16,6 +16,7 @@ import (
 	"fyne.io/fyne/v2/widget"
 
 	"github.com/harsiz/oc-miner/internal/engine"
+	"github.com/harsiz/oc-miner/internal/gpu"
 	"github.com/harsiz/oc-miner/internal/poolclient"
 	"github.com/harsiz/oc-miner/internal/solo"
 )
@@ -195,15 +196,25 @@ func (u *minerUI) start() {
 	msgs := make(chan engine.Msg, 64)
 	stop := engine.NewStopFlag()
 
+	dev, err := gpu.New()
+	if err != nil {
+		u.appendLog(fmt.Sprintf("GPU init failed: %v", err))
+		return
+	}
+
 	switch u.modeSelect.Selected {
 	case "Solo Mining":
 		api := strings.TrimSpace(u.apiEntry.Text)
 		id := strings.TrimSpace(u.minerIDEntry.Text)
 		if api == "" || id == "" {
+			dev.Close()
 			u.appendLog("API URL and miner address are required.")
 			return
 		}
-		go solo.Run(api, id, msgs, stop)
+		go func() {
+			defer dev.Close()
+			solo.Run(api, id, dev, msgs, stop)
+		}()
 	case "Pool Mining":
 		host := strings.TrimSpace(u.poolHostEntry.Text)
 		port, err := strconv.Atoi(strings.TrimSpace(u.poolPortEntry.Text))
@@ -212,10 +223,14 @@ func (u *minerUI) start() {
 		}
 		id := strings.TrimSpace(u.poolUserIDEntry.Text)
 		if host == "" || id == "" {
+			dev.Close()
 			u.appendLog("Pool host and your user id are required.")
 			return
 		}
-		go poolclient.Run(host, port, id, msgs, stop)
+		go func() {
+			defer dev.Close()
+			poolclient.Run(host, port, id, dev, msgs, stop)
+		}()
 	}
 
 	u.stop = stop

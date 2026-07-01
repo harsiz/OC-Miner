@@ -9,6 +9,7 @@ import (
 	"unsafe"
 
 	"github.com/harsiz/oc-miner/internal/job"
+	"github.com/harsiz/oc-miner/internal/minerdevice"
 )
 
 //go:embed kernel.cl
@@ -17,14 +18,8 @@ var kernelSource string
 const localWorkSize = 256
 const defaultGlobalWorkSize = 4 * 1024 * 1024 // 4,194,304 hashes per dispatch
 
-// FoundResult is a nonce whose hash satisfied the job's target.
-type FoundResult struct {
-	Nonce   uint64
-	HashHex string
-}
-
 // Miner owns a persistent OpenCL context/queue/kernel/buffers and searches
-// nonce ranges in batches.
+// nonce ranges in batches. It implements minerdevice.Device.
 type Miner struct {
 	context uintptr
 	queue   uintptr
@@ -39,7 +34,7 @@ type Miner struct {
 	lastJob        *job.Job
 	globalWorkSize uint64
 
-	AdapterName string
+	adapterName string
 }
 
 // New picks the first GPU device on the first platform that has one, builds
@@ -131,7 +126,7 @@ func New() (*Miner, error) {
 		bufTarget:      bufTarget,
 		bufOutput:      bufOutput,
 		globalWorkSize: defaultGlobalWorkSize,
-		AdapterName:    deviceName,
+		adapterName:    deviceName,
 	}
 
 	if err := m.setBufferArgs(); err != nil {
@@ -156,6 +151,9 @@ func (m *Miner) setBufferArgs() error {
 	}
 	return nil
 }
+
+// Name describes the GPU device for logging.
+func (m *Miner) Name() string { return m.adapterName }
 
 // BatchSize returns the number of nonces searched per SearchBatch call.
 func (m *Miner) BatchSize() uint64 { return m.globalWorkSize }
@@ -190,7 +188,7 @@ func (m *Miner) writeJob(j *job.Job) error {
 
 // SearchBatch searches BatchSize() nonces starting at baseNonce and returns a
 // result if one satisfying the job's target was found.
-func (m *Miner) SearchBatch(j *job.Job, baseNonce uint64) (*FoundResult, error) {
+func (m *Miner) SearchBatch(j *job.Job, baseNonce uint64) (*minerdevice.FoundResult, error) {
 	if j != m.lastJob {
 		if err := m.writeJob(j); err != nil {
 			return nil, err
@@ -235,7 +233,7 @@ func (m *Miner) SearchBatch(j *job.Job, baseNonce uint64) (*FoundResult, error) 
 	for i := 0; i < 8; i++ {
 		binary.BigEndian.PutUint32(hashBytes[i*4:], result[3+i])
 	}
-	return &FoundResult{Nonce: nonce, HashHex: hex.EncodeToString(hashBytes[:])}, nil
+	return &minerdevice.FoundResult{Nonce: nonce, HashHex: hex.EncodeToString(hashBytes[:])}, nil
 }
 
 // Close releases all OpenCL resources held by this Miner.

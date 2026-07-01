@@ -17,15 +17,15 @@ jobs:
           - os: windows-latest
             goos: windows
             ext: .exe
-            artifact: oc-miner-gpu-windows-amd64
+            artifact: oc-miner-windows-amd64
           - os: macos-latest
             goos: darwin
             ext: ""
-            artifact: oc-miner-gpu-macos-amd64
+            artifact: oc-miner-macos-amd64
           - os: ubuntu-latest
             goos: linux
             ext: ""
-            artifact: oc-miner-gpu-linux-amd64
+            artifact: oc-miner-linux-amd64
 
     runs-on: ${{ matrix.os }}
 
@@ -47,10 +47,14 @@ jobs:
         env:
           CGO_ENABLED: 1
 
-      - name: Build oc-pool-server (reference pool)
+      - name: Build oc-miner-cpu (CLI, solo + pool)
+        run: go build -v -o dist/oc-miner-cpu${{ matrix.ext }} ./cmd/oc-miner-cpu
+
+      - name: Build oc-pool-server (reference pool, Go)
         run: go build -v -o dist/oc-pool-server${{ matrix.ext }} ./cmd/oc-pool-server
-        env:
-          CGO_ENABLED: 1
+
+      - name: Copy Node.js pool server
+        run: cp node-pool/oc-pool.js dist/oc-pool.js
 
       - name: Run tests
         run: go test ./...

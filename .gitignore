@@ -2,3 +2,4 @@
 *.exe
 *.log
 .claude/
+node-pool/oc-pool-config.json

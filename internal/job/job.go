@@ -9,6 +9,7 @@ package job
 
 import (
 	"crypto/sha256"
+	"encoding/binary"
 	"encoding/hex"
 	"fmt"
 	"strconv"
@@ -105,6 +106,30 @@ func (j *Job) HashNonce(nonce uint64) string {
 	h.Write([]byte(j.IDClean))
 	h.Write([]byte(strconv.FormatUint(nonce, 10)))
 	return hex.EncodeToString(h.Sum(nil))
+}
+
+// HashNonceFast computes the same hash as HashNonce but reuses the
+// precomputed midstate, skipping re-compression of the fixed 64-byte
+// previous_hash block. This is what CPU mining uses for its hot loop; the
+// two must always agree (see job_test.go), and callers that submit a result
+// anywhere should still double-check it against HashNonce first as a safety
+// net against any divergence between the two implementations.
+func (j *Job) HashNonceFast(nonce uint64) string {
+	digits := strconv.FormatUint(nonce, 10)
+	var block [64]byte
+	copy(block[:32], j.PrefixTail[:])
+	copy(block[32:], digits)
+	msgLen := 32 + len(digits)
+	block[msgLen] = 0x80
+	totalBits := uint64(96+len(digits)) * 8
+	binary.BigEndian.PutUint64(block[56:64], totalBits)
+
+	final := compressBlock(j.Midstate, block[:])
+	var out [32]byte
+	for i, w := range final {
+		binary.BigEndian.PutUint32(out[i*4:], w)
+	}
+	return hex.EncodeToString(out[:])
 }
 
 // MeetsTarget reports whether hashHex satisfies this job's target, using the
